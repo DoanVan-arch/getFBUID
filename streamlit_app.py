@@ -3,9 +3,12 @@ import requests
 import base64
 import json
 import pandas as pd
-
 import re
-def getUID(url):  
+import time
+import threading
+import datetime
+
+def getUID(url):
     headers = {
             "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
             "accept-language": "vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5",
@@ -28,40 +31,14 @@ def getUID(url):
             "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             "viewport-width": "816"
         }
-    # proxies = {
-    #     "http": f"http://{proxy}",
-    #     "https": f"http://{proxy}",
-    # }
-    response = requests.get(url,headers=headers)
+    response = requests.get(url, headers=headers)
     return response
+
 def extract_post_ids(content):
-    """
-    Extract Facebook post IDs from a text file.
-
-    Args:
-        file_path (str): Path to the text file
-
-    Returns:
-        list: List of extracted post IDs
-    """
-    # Check if file exists
-    
-
-    # Define regex pattern to match "post_id":"NUMBERS"
     pattern = r'"post_id":"(\d+)"'
-
-    # Find all matches
     matches = re.findall(pattern, content)
-
-    # Print results
-    if matches:
-        print(f"Found {len(matches)} post IDs:")
-        for i, post_id in enumerate(matches, 1):
-            print(f"{i}. {post_id}")
-    else:
-        print("No post IDs found in the file.")
-
     return matches
+
 def getcmt(id):
     url = "https://www.facebook.com/api/graphql/"
 
@@ -146,54 +123,188 @@ def extract_comments(response):
             st.error(f"Response structure: {json.dumps(response, indent=2)}")
         return []
 
+# Initialize session state variables
+if 'comments_df' not in st.session_state:
+    st.session_state.comments_df = pd.DataFrame()
+if 'monitoring' not in st.session_state:
+    st.session_state.monitoring = False
+if 'last_update' not in st.session_state:
+    st.session_state.last_update = None
+if 'comment_ids' not in st.session_state:
+    st.session_state.comment_ids = set()
+if 'post_id' not in st.session_state:
+    st.session_state.post_id = None
+if 'encoded_id' not in st.session_state:
+    st.session_state.encoded_id = None
+if 'monitor_thread' not in st.session_state:
+    st.session_state.monitor_thread = None
+
+# Function to fetch comments and update the dataframe
+def fetch_and_update_comments():
+    if not st.session_state.encoded_id:
+        return
+
+    response = getcmt(st.session_state.encoded_id)
+    if not response:
+        return
+
+    new_comments = extract_comments(response)
+    if not new_comments:
+        return
+
+    # Check for new comments
+    new_comments_list = []
+    for comment in new_comments:
+        if comment['Comment ID'] not in st.session_state.comment_ids:
+            st.session_state.comment_ids.add(comment['Comment ID'])
+            new_comments_list.append(comment)
+
+    # Update the dataframe with new comments
+    if new_comments_list:
+        new_df = pd.DataFrame(new_comments_list)
+        st.session_state.comments_df = pd.concat([new_df, st.session_state.comments_df]).reset_index(drop=True)
+
+    st.session_state.last_update = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+# Function to monitor comments continuously
+def monitor_comments(interval):
+    while st.session_state.monitoring:
+        fetch_and_update_comments()
+        time.sleep(interval)
+
 # Streamlit UI
 st.title("Facebook Comments Extractor")
 
-# Input for post ID
-post_id = st.text_input("Enter Facebook Post URL:", "https://www.facebook.com/watch?v=679649137799306")
+# Input for post URL
+post_url = st.text_input("Enter Facebook Post URL:", "http://facebook.com/1206720038125749")
 
-if st.button("Fetch Comments"):
-    if post_id:
-        with st.spinner("Fetching comments..."):
-            # Encode the post ID
-            res =  getUID(post_id)
-            post_id_list = extract_post_ids(res.text)
-            post_id = post_id_list[0]
-            encoded_id = base64.b64encode(f"feedback:{post_id}".encode('utf-8')).decode('utf-8')
-
-            # Get comments
-            response = getcmt(encoded_id)
-
-            if response:
-                comments = extract_comments(response)
-
-                if comments:
-                    # Display as table
-                    st.subheader(f"Comments for Post ID: {post_id}")
-                    df = pd.DataFrame(comments)
-                    st.dataframe(df)
-
-                    # Download option
-                    csv = df.to_csv(index=False)
-                    st.download_button(
-                        label="Download Comments as CSV",
-                        data=csv,
-                        file_name=f"facebook_comments_{post_id}.csv",
-                        mime="text/csv"
-                    )
-                else:
-                    st.warning("No comments found or unable to extract comments.")
-            else:
-                st.error("Failed to fetch comments. Check the post ID and try again.")
+# Input for monitoring interval
+col1, col2 = st.columns(2)
+with col1:
+    interval = st.number_input("Monitoring interval (seconds):", min_value=5, value=30)
+with col2:
+    if not st.session_state.monitoring:
+        start_button = st.button("Start Monitoring")
     else:
-        st.warning("Please enter a Facebook Post ID.")
+        stop_button = st.button("Stop Monitoring")
+
+# Handle start monitoring
+if 'start_button' in locals() and start_button:
+    if post_url:
+        with st.spinner("Initializing monitoring..."):
+            # Reset state
+            st.session_state.comments_df = pd.DataFrame()
+            st.session_state.comment_ids = set()
+
+            # Get post ID from URL
+            res = getUID(post_url)
+            post_id_list = extract_post_ids(res.text)
+
+            if post_id_list:
+                st.session_state.post_id = post_id_list[0]
+                st.session_state.encoded_id = base64.b64encode(f"feedback:{st.session_state.post_id}".encode('utf-8')).decode('utf-8')
+
+                # Initial fetch
+                fetch_and_update_comments()
+
+                # Start monitoring thread
+                st.session_state.monitoring = True
+                st.session_state.monitor_thread = threading.Thread(target=monitor_comments, args=(interval,))
+                st.session_state.monitor_thread.daemon = True
+                st.session_state.monitor_thread.start()
+
+                st.success(f"Monitoring started for post ID: {st.session_state.post_id}")
+                st.experimental_rerun()
+            else:
+                st.error("Could not extract post ID from the URL.")
+    else:
+        st.warning("Please enter a Facebook Post URL.")
+
+# Handle stop monitoring
+if 'stop_button' in locals() and stop_button:
+    st.session_state.monitoring = False
+    st.success("Monitoring stopped.")
+    st.experimental_rerun()
+
+# Display monitoring status
+if st.session_state.monitoring:
+    st.markdown(f"""
+    ### Monitoring Status
+    - **Post ID:** {st.session_state.post_id}
+    - **Status:** Active
+    - **Interval:** {interval} seconds
+    - **Last Update:** {st.session_state.last_update or "Not yet updated"}
+    - **Total Comments:** {len(st.session_state.comments_df)}
+    """)
+
+# Display comments table
+if not st.session_state.comments_df.empty:
+    st.subheader("Comments")
+    st.dataframe(st.session_state.comments_df)
+
+    # Download option
+    csv = st.session_state.comments_df.to_csv(index=False)
+    st.download_button(
+        label="Download Comments as CSV",
+        data=csv,
+        file_name=f"facebook_comments_{st.session_state.post_id}.csv",
+        mime="text/csv"
+    )
+
+# One-time fetch button
+if st.button("Fetch Comments Once"):
+    if post_url:
+        with st.spinner("Fetching comments..."):
+            # Get post ID from URL
+            res = getUID(post_url)
+            post_id_list = extract_post_ids(res.text)
+
+            if post_id_list:
+                post_id = post_id_list[0]
+                encoded_id = base64.b64encode(f"feedback:{post_id}".encode('utf-8')).decode('utf-8')
+
+                # Get comments
+                response = getcmt(encoded_id)
+
+                if response:
+                    comments = extract_comments(response)
+
+                    if comments:
+                        # Display as table
+                        st.subheader(f"Comments for Post ID: {post_id}")
+                        df = pd.DataFrame(comments)
+                        st.dataframe(df)
+
+                        # Download option
+                        csv = df.to_csv(index=False)
+                        st.download_button(
+                            label="Download Comments as CSV",
+                            data=csv,
+                            file_name=f"facebook_comments_{post_id}.csv",
+                            mime="text/csv"
+                        )
+                    else:
+                        st.warning("No comments found or unable to extract comments.")
+                else:
+                    st.error("Failed to fetch comments. Check the post URL and try again.")
+            else:
+                st.error("Could not extract post ID from the URL.")
+    else:
+        st.warning("Please enter a Facebook Post URL.")
 
 # Add some helpful information
 st.markdown("---")
 st.markdown("""
 ### How to use:
-1. Enter a Facebook post ID (the number in the post URL)
-2. Click "Fetch Comments" to retrieve all comments
+1. Enter a Facebook post URL
+2. Choose one of the following options:
+   - **Fetch Comments Once**: Get all current comments one time
+   - **Start Monitoring**: Continuously check for new comments at the specified interval
 3. View the comments in the table
 4. Download as CSV if needed
+
+### Notes:
+- The monitoring feature will only show new comments that appear after monitoring starts
+- You can stop monitoring at any time
+- The CSV download includes all comments collected during the monitoring session
 """)

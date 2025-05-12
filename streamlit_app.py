@@ -138,11 +138,26 @@ if 'encoded_id' not in st.session_state:
     st.session_state.encoded_id = None
 if 'monitor_thread' not in st.session_state:
     st.session_state.monitor_thread = None
+if 'fetch_count' not in st.session_state:
+    st.session_state.fetch_count = 0
+if 'start_time' not in st.session_state:
+    st.session_state.start_time = None
+if 'new_comments_count' not in st.session_state:
+    st.session_state.new_comments_count = 0
 
 # Function to fetch comments and update the dataframe
 def fetch_and_update_comments():
     if not st.session_state.encoded_id:
         return
+
+    # Increment fetch count
+    st.session_state.fetch_count += 1
+
+    # Record current time
+    current_time = datetime.datetime.now()
+
+    # Get previous comment count
+    previous_count = len(st.session_state.comment_ids)
 
     response = getcmt(st.session_state.encoded_id)
     if not response:
@@ -164,7 +179,10 @@ def fetch_and_update_comments():
         new_df = pd.DataFrame(new_comments_list)
         st.session_state.comments_df = pd.concat([new_df, st.session_state.comments_df]).reset_index(drop=True)
 
-    st.session_state.last_update = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # Update new comments count for this fetch
+        st.session_state.new_comments_count = len(st.session_state.comment_ids) - previous_count
+
+    st.session_state.last_update = current_time.strftime("%Y-%m-%d %H:%M:%S")
 
 # Function to monitor comments continuously
 def monitor_comments(interval):
@@ -195,6 +213,9 @@ if 'start_button' in locals() and start_button:
             # Reset state
             st.session_state.comments_df = pd.DataFrame()
             st.session_state.comment_ids = set()
+            st.session_state.fetch_count = 0
+            st.session_state.new_comments_count = 0
+            st.session_state.start_time = datetime.datetime.now()
 
             # Get post ID from URL
             res = getUID(post_url)
@@ -228,13 +249,26 @@ if 'stop_button' in locals() and stop_button:
 
 # Display monitoring status
 if st.session_state.monitoring:
+    # Calculate elapsed time
+    if st.session_state.start_time:
+        elapsed_time = datetime.datetime.now() - st.session_state.start_time
+        hours, remainder = divmod(elapsed_time.total_seconds(), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        elapsed_str = f"{int(hours)}h {int(minutes)}m {int(seconds)}s"
+    else:
+        elapsed_str = "Unknown"
+
     st.markdown(f"""
     ### Monitoring Status
     - **Post ID:** {st.session_state.post_id}
     - **Status:** Active
     - **Interval:** {interval} seconds
+    - **Started:** {st.session_state.start_time.strftime("%Y-%m-%d %H:%M:%S") if st.session_state.start_time else "Unknown"}
+    - **Running time:** {elapsed_str}
     - **Last Update:** {st.session_state.last_update or "Not yet updated"}
+    - **Fetch count:** {st.session_state.fetch_count}
     - **Total Comments:** {len(st.session_state.comments_df)}
+    - **New comments in last fetch:** {st.session_state.new_comments_count}
     """)
 
 # Display comments table
@@ -242,17 +276,18 @@ if not st.session_state.comments_df.empty:
     st.subheader("Comments")
     st.dataframe(st.session_state.comments_df)
 
-    # Download option
+    # Download option with unique key
     csv = st.session_state.comments_df.to_csv(index=False)
     st.download_button(
         label="Download Comments as CSV",
         data=csv,
         file_name=f"facebook_comments_{st.session_state.post_id}.csv",
-        mime="text/csv"
+        mime="text/csv",
+        key="monitoring_download"  # Add unique key
     )
 
 # One-time fetch button
-if st.button("Fetch Comments Once"):
+if st.button("Fetch Comments Once", key="fetch_once_button"):  # Add unique key
     if post_url:
         with st.spinner("Fetching comments..."):
             # Get post ID from URL
@@ -273,15 +308,16 @@ if st.button("Fetch Comments Once"):
                         # Display as table
                         st.subheader(f"Comments for Post ID: {post_id}")
                         df = pd.DataFrame(comments)
-                        st.dataframe(df)
+                        st.dataframe(df, key="onetime_dataframe")  # Add unique key
 
-                        # Download option
+                        # Download option with unique key
                         csv = df.to_csv(index=False)
                         st.download_button(
                             label="Download Comments as CSV",
                             data=csv,
                             file_name=f"facebook_comments_{post_id}.csv",
-                            mime="text/csv"
+                            mime="text/csv",
+                            key="onetime_download"  # Add unique key
                         )
                     else:
                         st.warning("No comments found or unable to extract comments.")

@@ -214,7 +214,7 @@ if 'start_button' in locals() and start_button:
                 st.session_state.monitor_thread.start()
 
                 st.success(f"Monitoring started for post ID: {st.session_state.post_id}")
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("Could not extract post ID from the URL.")
     else:

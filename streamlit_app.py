@@ -150,7 +150,7 @@ def extract_comments(response):
 st.title("Facebook Comments Extractor")
 
 # Input for post ID
-post_id = st.text_input("Enter Facebook Post URL:", "http://facebook.com/1206720038125749")
+post_id = st.text_input("Enter Facebook Post URL:", "https://www.facebook.com/watch?v=679649137799306")
 
 if st.button("Fetch Comments"):
     if post_id:

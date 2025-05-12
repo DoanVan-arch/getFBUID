@@ -224,7 +224,7 @@ if 'start_button' in locals() and start_button:
 if 'stop_button' in locals() and stop_button:
     st.session_state.monitoring = False
     st.success("Monitoring stopped.")
-    st.experimental_rerun()
+    st.rerun()
 
 # Display monitoring status
 if st.session_state.monitoring:
